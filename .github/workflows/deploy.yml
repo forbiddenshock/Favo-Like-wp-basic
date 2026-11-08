@@ -1,0 +1,129 @@
+name: Deploy favo-like-wp to Cloudflare Workers
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      cron_minutes:
+        description: "Cronの実行間隔（分単位: 1〜59。1なら毎分実行、30なら30分おき）"
+        required: false
+        default: "1"
+      include_likes:
+        description: "「いいね (Likes)」を取得して1ポスト1記事で保存するか (true / false)"
+        required: false
+        default: "true"
+      include_retweets:
+        description: "「リポスト (RT)」を取得して1ポスト1記事で保存するか (true / false)"
+        required: false
+        default: "true"
+      include_quotes:
+        description: "「引用ポスト (Quotes)」を取得して1ポスト1記事で保存するか (true / false)"
+        required: false
+        default: "true"
+      github_md_targets:
+        description: "GitHubに出力するMarkdown種別 (year, month, full をカンマ区切りで指定)"
+        required: false
+        default: "year,month,full"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    name: Deploy & Sync Secrets to Cloudflare
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Wrangler
+        run: |
+          if [ ! -f "wrangler.toml" ]; then for d in */; do if [ -f "${d}wrangler.toml" ]; then cd "$d"; break; fi; done; fi
+          npm install
+
+      - name: Configure Cron & Deploy Worker to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CRON_MINUTES_INPUT: ${{ github.event.inputs.cron_minutes || vars.CRON_MINUTES || '1' }}
+        run: |
+          if [ ! -f "wrangler.toml" ]; then for d in */; do if [ -f "${d}wrangler.toml" ]; then cd "$d"; break; fi; done; fi
+          node -e '
+            const fs = require("fs");
+            const raw = String(process.env.CRON_MINUTES_INPUT || "1").trim();
+            let cronExpr = "* * * * *";
+            if (raw.includes(" ")) {
+              cronExpr = raw;
+            } else {
+              const mins = parseInt(raw, 10);
+              if (!isNaN(mins) && mins >= 2 && mins <= 59) {
+                cronExpr = `*/${mins} * * * *`;
+              } else if (mins === 60) {
+                cronExpr = "0 * * * *";
+              }
+            }
+            const toml = fs.readFileSync("wrangler.toml", "utf8");
+            const updated = toml.replace(/crons\s*=\s*\[.*?\]/, `crons = ["${cronExpr}"]`);
+            fs.writeFileSync("wrangler.toml", updated);
+            console.log("Configured Cloudflare Cron:", cronExpr);
+          '
+          npx wrangler deploy \
+            --var INCLUDE_LIKES:"${{ github.event.inputs.include_likes || vars.INCLUDE_LIKES || 'true' }}" \
+            --var INCLUDE_RETWEETS:"${{ github.event.inputs.include_retweets || vars.INCLUDE_RETWEETS || 'true' }}" \
+            --var INCLUDE_QUOTES:"${{ github.event.inputs.include_quotes || vars.INCLUDE_QUOTES || 'true' }}" \
+            --var GITHUB_MD_TARGETS:"${{ github.event.inputs.github_md_targets || vars.GH_MD_TARGETS || 'year,month,full' }}"
+
+      - name: Sync GitHub Secrets to Cloudflare Worker Secrets
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          X_USERNAME: ${{ secrets.X_USERNAME }}
+          X_USER_ID: ${{ secrets.X_USER_ID }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_SECRET: ${{ secrets.X_ACCESS_SECRET }}
+          WP_URL: ${{ secrets.WP_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          GITHUB_TOKEN_SECRET: ${{ secrets.GH_SYNC_TOKEN }}
+          GITHUB_REPO_SECRET: ${{ secrets.GH_SYNC_REPO || github.repository }}
+          TRIGGER_SECRET: ${{ secrets.TRIGGER_SECRET }}
+        run: |
+          if [ ! -f "wrangler.toml" ]; then for d in */; do if [ -f "${d}wrangler.toml" ]; then cd "$d"; break; fi; done; fi
+          node -e '
+            const fs = require("fs");
+            const secrets = {};
+            const keys = [
+              ["X_USERNAME", process.env.X_USERNAME],
+              ["X_USER_ID", process.env.X_USER_ID],
+              ["X_BEARER_TOKEN", process.env.X_BEARER_TOKEN],
+              ["X_API_KEY", process.env.X_API_KEY],
+              ["X_API_SECRET", process.env.X_API_SECRET],
+              ["X_ACCESS_TOKEN", process.env.X_ACCESS_TOKEN],
+              ["X_ACCESS_SECRET", process.env.X_ACCESS_SECRET],
+              ["WP_URL", process.env.WP_URL],
+              ["WP_USERNAME", process.env.WP_USERNAME],
+              ["WP_APP_PASSWORD", process.env.WP_APP_PASSWORD],
+              ["GITHUB_TOKEN", process.env.GITHUB_TOKEN_SECRET],
+              ["GITHUB_REPO", process.env.GITHUB_TOKEN_SECRET ? process.env.GITHUB_REPO_SECRET : ""],
+              ["TRIGGER_SECRET", process.env.TRIGGER_SECRET]
+            ];
+            for (const [k, v] of keys) {
+              if (v && String(v).trim() !== "") {
+                secrets[k] = String(v).trim();
+              }
+            }
+            fs.writeFileSync(".cf-secrets.json", JSON.stringify(secrets));
+          '
+          npx wrangler secret bulk .cf-secrets.json
+          rm -f .cf-secrets.json
+
