@@ -1,0 +1,16 @@
+{
+  "name": "favo-like-wp-basic",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fetch X (Twitter) Likes, Retweets, and Quotes and save each post as an individual WordPress article with media uploaded to WordPress Media Library",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "test": "node --test test/worker.test.js"
+  },
+  "devDependencies": {
+    "wrangler": "^4.0.0"
+  }
+}
+

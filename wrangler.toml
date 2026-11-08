@@ -1,0 +1,25 @@
+name = "favo-like-wp"
+main = "src/worker.js"
+compatibility_date = "2024-11-01"
+
+# Cloudflare Cron Triggers: デフォルトは最短の1分おき (* * * * *) に実行
+# （GitHub Actions 実行時の入力欄、またはここの crons で自由に変更可能）
+[triggers]
+crons = ["* * * * *"]
+
+[vars]
+# タイムゾーン（日時表示に使用）
+TIMEZONE = "Asia/Tokyo"
+
+# 1回のCron実行でX APIから取得する最大件数 (5〜100)
+X_MAX_RESULTS = "20"
+
+# 取得対象 ("true" / "false")
+INCLUDE_LIKES = "true"
+INCLUDE_RETWEETS = "true"
+INCLUDE_QUOTES = "true"
+
+# GitHub Markdown出力モード（任意・カンマ区切り: "year", "month", "full"）
+GITHUB_MD_TARGETS = "year,month,full"
+GITHUB_MD_DIR = ""
+

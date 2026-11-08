@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>favo-like-wp アーカイブ一括インポートツール (いいね・RT・引用 1ポスト1記事)</title>
+  <style>
+    :root {
+      --bg: #f7f9fa;
+      --surface: #ffffff;
+      --border: #ccd6dd;
+      --text: #14171a;
+      --muted: #536471;
+      --primary: #1d9bf0;
+      --primary-hover: #1a8cd8;
+      --focus: #0b57d0;
+      --danger: #d93025;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 1.5rem;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 1rem;
+      line-height: 1.5;
+      color: var(--text);
+      background: var(--bg);
+    }
+    main { max-width: 900px; margin-inline: auto; }
+    header { margin-block-end: 1.5rem; }
+    h1 { font-size: 1.5rem; margin-block: 0 0.5rem; }
+    fieldset {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      margin-block-end: 1.5rem;
+    }
+    legend { font-weight: 700; font-size: 1.1rem; padding-inline: 0.5rem; }
+    .form-group { margin-block-end: 1.25rem; }
+    .form-group:last-child { margin-block-end: 0; }
+    label.field-label { display: inline-block; font-weight: 600; margin-block-end: 0.35rem; }
+    .hint { display: block; font-size: 0.875rem; color: var(--muted); margin-block-top: 0.25rem; }
+    input[type="text"], input[type="url"], input[type="password"], input[type="date"], input[type="file"] {
+      width: 100%;
+      font-size: 1rem;
+      padding: 0.75rem;
+      min-height: 48px;
+      border: 1px solid #8899a6;
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+    }
+    .choice-list { display: flex; flex-direction: column; gap: 0.5rem; margin-block-top: 0.35rem; }
+    .choice-item {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      min-height: 48px;
+      padding: 0.5rem 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fafcfd;
+      cursor: pointer;
+    }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-block-top: 1rem; }
+    button {
+      font-size: 1rem;
+      font-weight: 600;
+      min-height: 48px;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      border: 1px solid transparent;
+      cursor: pointer;
+    }
+    button.btn-primary { background: var(--primary); color: #fff; }
+    button.btn-secondary { background: #fff; color: var(--text); border-color: #8899a6; }
+    .status-box {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+      margin-block-top: 1.5rem;
+    }
+    .log-output {
+      background: #14171a;
+      color: #e1e8ed;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.875rem;
+      padding: 1rem;
+      border-radius: 6px;
+      max-height: 320px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      margin-block-top: 0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>favo-like-wp アーカイブ一括インポートツール（1ポスト＝1記事）</h1>
+      <p>
+        Xアーカイブ（<code>data/like.js</code>、<code>data/tweets.js</code>、<code>data/tweets_media/</code>）を読み込み、
+        <strong>「いいね」「RT」「引用」</strong>を <strong>1ポスト＝1記事</strong> として WordPress へインポート（XML出力 / REST API直接送信）します。
+      </p>
+    </header>
+
+    <form id="archive-form">
+      <fieldset>
+        <legend>1. Xアーカイブデータの読み込み</legend>
+        <div class="form-group">
+          <label class="field-label" for="archive-folder">解凍したXアーカイブのフォルダを選択（data フォルダまたはルートフォルダ）</label>
+          <input type="file" id="archive-folder" webkitdirectory directory multiple>
+          <span class="hint"><code>like.js</code>（いいね一覧）、<code>tweets.js</code>（RT・引用）、<code>tweets_media/</code>（画像・動画）を自動認識します。</span>
+        </div>
+        <div class="form-group">
+          <label class="field-label" for="x-username">X ユーザー名（@なし） *</label>
+          <input type="text" id="x-username" required placeholder="showya_kiss">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>2. 取得対象種別</legend>
+        <div class="choice-list">
+          <label class="choice-item"><input type="checkbox" id="inc-like" checked><span>♥ いいね（<code>like.js</code>）を1ポスト1記事として保存</span></label>
+          <label class="choice-item"><input type="checkbox" id="inc-rt" checked><span>🔁 リポスト（RT）を1ポスト1記事として保存</span></label>
+          <label class="choice-item"><input type="checkbox" id="inc-quote" checked><span>💬 引用ポストを1ポスト1記事として保存</span></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>3. WordPress 接続設定（REST API 送信時）</legend>
+        <div class="form-group">
+          <label class="field-label" for="wp-url">WordPress サイトURL</label>
+          <input type="url" id="wp-url" placeholder="https://example.com">
+        </div>
+        <div class="form-group">
+          <label class="field-label" for="wp-username">WordPress ユーザー名</label>
+          <input type="text" id="wp-username">
+        </div>
+        <div class="form-group">
+          <label class="field-label" for="wp-app-password">WordPress アプリケーションパスワード</label>
+          <input type="password" id="wp-app-password">
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>4. 実行</legend>
+        <div class="btn-row">
+          <button type="submit" name="action_mode" value="export_xml" class="btn-primary">
+            WordPress インポート用 XML (WXR: 1ポスト1記事) をダウンロード
+          </button>
+          <button type="submit" name="action_mode" value="push_wp" class="btn-secondary">
+            WordPress REST API へ直接メディア＋1ポスト1記事を送信
+          </button>
+        </div>
+      </fieldset>
+    </form>
+
+    <section class="status-box">
+      <strong>ステータス: <span id="status-summary">アーカイブフォルダを選択してください</span></strong>
+      <div id="log-output" class="log-output">待機中...</div>
+    </section>
+  </main>
+
+  <script>
+    const X_FAVO_STYLE = `<style>
+    .x-log-day-container { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    .x-log-post { border: 1px solid #e1e8ed; border-radius: 8px; padding: 14px; margin-bottom: 16px; background: #fff; }
+    .x-log-header { font-size: 0.85em; color: #657786; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .x-log-header a { color: #1da1f2; text-decoration: none; font-weight: 600; }
+    .x-favo-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.8em; font-weight: bold; color: #fff; }
+    .x-favo-badge-like { background: #e0245e; }
+    .x-favo-badge-rt { background: #17bf63; }
+    .x-favo-badge-quote { background: #1da1f2; }
+    .x-log-body { font-size: 1.0em; line-height: 1.55; color: #14171a; word-break: break-word; }
+    .x-log-body p { margin: 0 0 1em 0; }
+    .x-log-body p:last-child { margin-bottom: 0; }
+    .x-log-media { margin-top: 10px; }
+    .x-log-media img, .x-log-media video { max-width: 100%; height: auto; border-radius: 6px; margin-top: 4px; display: block; }
+    .x-log-quoted { border: 1px solid #ccd6dd; border-radius: 6px; margin: 10px 1.5em; padding: 10px 1.5em; background: #f5f8fa; }
+    .x-log-quoted-header { font-weight: bold; font-size: 0.85em; color: #555; margin-bottom: 4px; }
+  </style>`;
+
+    let loadedRawTweets = [];
+    let loadedRawLikes = [];
+    let mediaFileMap = new Map();
+
+    const statusSummary = document.getElementById("status-summary");
+    const logOutput = document.getElementById("log-output");
+    const usernameInput = document.getElementById("x-username");
+
+    function appendLog(msg) {
+      const time = new Date().toLocaleTimeString("ja-JP");
+      logOutput.textContent += `\n[${time}] ${msg}`;
+      logOutput.scrollTop = logOutput.scrollHeight;
+    }
+
+    function setSummary(msg) {
+      statusSummary.textContent = msg;
+      appendLog(msg);
+    }
+
+    function escapeHtml(str) {
+      return String(str || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function parseYtdJsText(jsText) {
+      const eqIdx = jsText.indexOf("=");
+      if (eqIdx === -1) return JSON.parse(jsText);
+      return JSON.parse(jsText.slice(eqIdx + 1).trim().replace(/;\s*$/, ""));
+    }
+
+    document.getElementById("archive-folder").addEventListener("change", async (e) => {
+      loadedRawTweets = [];
+      loadedRawLikes = [];
+      mediaFileMap.clear();
+
+      const files = Array.from(e.target.files || []);
+      for (const f of files) {
+        const rel = f.webkitRelativePath || f.name;
+        if (/(^|\/)tweets(-part\d+)?\.js$/i.test(rel)) {
+          const parsed = parseYtdJsText(await f.text());
+          for (const item of parsed) {
+            if (item.tweet) loadedRawTweets.push(item.tweet);
+          }
+        } else if (/(^|\/)like(-part\d+)?\.js$/i.test(rel)) {
+          const parsed = parseYtdJsText(await f.text());
+          for (const item of parsed) {
+            if (item.like) loadedRawLikes.push(item.like);
+          }
+        } else if (/(^|\/)account\.js$/i.test(rel) && !usernameInput.value) {
+          try {
+            const parsed = parseYtdJsText(await f.text());
+            const uname = parsed?.[0]?.account?.username;
+            if (uname) usernameInput.value = uname;
+          } catch {}
+        } else if (rel.includes("tweets_media/")) {
+          mediaFileMap.set(f.name, f);
+        }
+      }
+      setSummary(`読み込み完了: ツイート ${loadedRawTweets.length} 件 / いいね ${loadedRawLikes.length} 件 / メディア ${mediaFileMap.size} 件`);
+    });
+
+    function formatTweetBodyHtml(text) {
+      const normalized = String(text || "").trim().replace(/\r\n|\r/g, "\n");
+      if (!normalized) return "";
+      const paragraphs = normalized.split(/\n{2,}/);
+      if (paragraphs.length === 1) return escapeHtml(paragraphs[0]).replace(/\n/g, "<br />\n");
+      return paragraphs
+        .map((para, idx) => {
+          const inner = escapeHtml(para).replace(/\n/g, "<br />\n");
+          const margin = idx < paragraphs.length - 1 ? "0 0 1em 0" : "0";
+          return `<p style="margin: ${margin};">${inner}</p>`;
+        })
+        .join("\n");
+    }
+
+    function buildSinglePostTitle(post) {
+      const typeLabel = post.favoType === "like" ? "[いいね]" : post.favoType === "rt" ? "[RT]" : "[引用]";
+      const clean = String(post.text || "")
+        .replace(/^RT @[A-Za-z0-9_]+:\s*/i, "")
+        .replace(/https?:\/\/\S+/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 42);
+      return `${typeLabel} @${post.username}: ${clean || post.dateStr}`;
+    }
+
+    function buildSingleArticleHtml(post) {
+      const postUrl = post.expandedUrl || `https://x.com/${encodeURIComponent(post.username)}/status/${encodeURIComponent(post.id)}`;
+      const badgeClass =
+        post.favoType === "like"
+          ? "x-favo-badge x-favo-badge-like"
+          : post.favoType === "rt"
+            ? "x-favo-badge x-favo-badge-rt"
+            : "x-favo-badge x-favo-badge-quote";
+      const badgeText = post.favoType === "like" ? "♥ いいね" : post.favoType === "rt" ? "🔁 RT" : "💬 引用";
+      const bodyHtml = formatTweetBodyHtml(post.text);
+
+      let mediaHtml = "";
+      if (post.media && post.media.length > 0) {
+        const items = post.media
+          .map((m) => {
+            const src = escapeHtml(m.wpUrl || m.url);
+            if (m.type === "video") {
+              return `        <video controls playsinline preload="metadata" src="${src}" style="max-width: 100%; height: auto; border-radius: 6px; margin-top: 4px;"><source src="${src}" type="video/mp4" /></video>`;
+            }
+            return `        <a href="${src}" target="_blank" rel="noopener"><img decoding="async" src="${src}" alt="Post Media" loading="lazy" /></a>`;
+          })
+          .join("<br />\n");
+        mediaHtml = `\n    <div class="x-log-media">\n${items}\n    </div>`;
+      }
+
+      return `<div class="x-log-day-container" data-post-id="${escapeHtml(post.id)}" data-favo-type="${escapeHtml(post.favoType)}">
+  ${X_FAVO_STYLE}
+  <div class="x-log-post" id="x-post-${escapeHtml(post.id)}">
+    <div class="x-log-header">
+      <span class="${badgeClass}">${badgeText}</span>
+      <span><strong>@${escapeHtml(post.username)}</strong></span>
+      <a href="${escapeHtml(postUrl)}" target="_blank" rel="noopener">${escapeHtml(post.dateStr)} ${escapeHtml(post.timeStr)} (元ポスト)</a>
+    </div>
+    <div class="x-log-body">${bodyHtml}</div>${mediaHtml}
+  </div>
+</div>`;
+    }
+
+    function collectTargetPosts() {
+      const uname = usernameInput.value.trim().replace(/^@/, "") || "user";
+      const incLike = document.getElementById("inc-like").checked;
+      const incRt = document.getElementById("inc-rt").checked;
+      const incQuote = document.getElementById("inc-quote").checked;
+      const list = [];
+
+      if (incRt || incQuote) {
+        for (const t of loadedRawTweets) {
+          const id = String(t.id_str || t.id);
+          const rawText = String(t.full_text || t.text || "");
+          const isRt = rawText.startsWith("RT @");
+          const urls = t.entities?.urls || [];
+          const isQuote = !isRt && urls.some((u) => /^https?:\/\/(?:twitter\.com|x\.com)\/[A-Za-z0-9_]+\/status\/\d+/i.test(u.expanded_url || ""));
+          if (!isRt && !isQuote) continue;
+          if (isRt && !incRt) continue;
+          if (isQuote && !incQuote) continue;
+
+          const d = new Date(t.created_at);
+          const dateStr = isNaN(d.getTime()) ? "2026-01-01" : d.toISOString().slice(0, 10);
+          const timeStr = isNaN(d.getTime()) ? "00:00" : d.toISOString().slice(11, 16);
+
+          const rawMedia = t.extended_entities?.media || t.entities?.media || [];
+          const media = rawMedia.map((m) => ({
+            type: m.type === "video" || m.type === "animated_gif" ? "video" : "photo",
+            url: m.video_info?.variants?.find((v) => v.content_type === "video/mp4")?.url || m.media_url_https || m.media_url
+          }));
+
+          list.push({
+            id,
+            favoType: isRt ? "rt" : "quote",
+            username: uname,
+            dateStr,
+            timeStr,
+            text: rawText,
+            media
+          });
+        }
+      }
+
+      if (incLike) {
+        for (const lk of loadedRawLikes) {
+          if (!lk.tweetId) continue;
+          list.push({
+            id: String(lk.tweetId),
+            favoType: "like",
+            username: "liked_post",
+            dateStr: new Date().toISOString().slice(0, 10),
+            timeStr: "00:00",
+            expandedUrl: lk.expandedUrl || `https://x.com/i/web/status/${lk.tweetId}`,
+            text: lk.fullText || lk.expandedUrl || "",
+            media: []
+          });
+        }
+      }
+
+      return list;
+    }
+
+    document.getElementById("archive-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const mode = e.submitter?.value || "export_xml";
+      const posts = collectTargetPosts();
+      if (posts.length === 0) {
+        setSummary("対象のポストが0件です。");
+        return;
+      }
+
+      if (mode === "export_xml") {
+        const siteUrl = document.getElementById("wp-url").value.trim().replace(/\/+$/, "") || "https://example.com";
+        let itemsXml = "";
+        for (const p of posts) {
+          const slug = `x-favo-${p.favoType}-${p.id}`;
+          const title = buildSinglePostTitle(p);
+          const content = buildSingleArticleHtml(p).replace(/\]\]>/g, "]]]]><![CDATA[>");
+          itemsXml += `
+    <item>
+      <title>${escapeHtml(title)}</title>
+      <wp:post_name><![CDATA[${slug}]]></wp:post_name>
+      <wp:status><![CDATA[publish]]></wp:status>
+      <wp:post_type><![CDATA[post]]></wp:post_type>
+      <content:encoded><![CDATA[${content}]]></content:encoded>
+    </item>`;
+        }
+        const xml = `<?xml version="1.0" encoding="UTF-8" ?>
+<rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/" xmlns:wp="http://wordpress.org/export/1.2/">
+  <channel><title>favo-like-wp Export</title><wp:wxr_version>1.2</wp:wxr_version>${itemsXml}</channel>
+</rss>`;
+        const blob = new Blob([xml], { type: "application/xml;charset=utf-8" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "favo-like-wp-import.xml";
+        a.click();
+        setSummary(`XML出力完了: ${posts.length} 件の記事を出力しました。`);
+      }
+    });
+  </script>
+</body>
+</html>
+
