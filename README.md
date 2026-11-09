@@ -36,6 +36,8 @@
    - **「RT」と「引用」だけ取得する場合**:
      - **`Bearer Token`** 1つだけで動きます。
 
+   Bearer Token と OAuth 1.0a の両方を設定している場合、公開 API（ユーザー・タイムライン・ポスト情報）は Bearer Token を先に使用し、401の場合は OAuth 1.0a へ自動で再試行します。「いいね」取得には OAuth 1.0a の4キーを使用します。X Developer Portal で API Key/Secret を再発行した場合は、対応する Access Token/Secret も再発行して4つを同じ App の組み合わせにしてください。
+
 ### ③ Cloudflare の「Account ID」と「APIトークン」
 1. [Cloudflare ダッシュボード](https://dash.cloudflare.com/) にログインし、左メニュー **「Workers & Pages」** の画面右側にある **「Account ID」** をメモします。
 2. 右上の人型アイコン → **「My Profile」** → **「API Tokens」** → **「Create Token」** を開きます。
@@ -89,4 +91,3 @@
 2. 左側の **「Deploy favo-like-wp to Cloudflare Workers」** をクリックします。
 3. 右側の **「Run workflow」** を押し、実行間隔（`cron_minutes`：デフォルトは `1` 分おき）や取得対象（`include_likes`, `include_retweets`, `include_quotes`）を確認して緑色の **「Run workflow」** ボタンを押します。
 4. 緑色のチェックマーク ✅ が付けば完了です！
-

@@ -7,7 +7,8 @@ import {
   buildSinglePostSlug,
   buildSinglePostTitle,
   buildSingleArticleHtml,
-  buildMergedMarkdownDocument
+  buildMergedMarkdownDocument,
+  fetchFavoLikePosts
 } from "../src/worker.js";
 
 test("normalizeFavoTimelineResponse filters out normal/reply posts and keeps only RTs and Quotes with media", () => {
@@ -151,3 +152,46 @@ test("normalizeLikedTweetsResponse normalizes liked posts with author and media 
   assert.ok(!mdDoc.content.includes("illust1.png"));
 });
 
+test("fetchFavoLikePosts retries public X API calls with OAuth 1.0a after a Bearer 401", async (t) => {
+  const authorizationHeaders = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    authorizationHeaders.push(options.headers.Authorization);
+    if (authorizationHeaders.length === 1) {
+      return new Response(JSON.stringify({ title: "Unauthorized" }), { status: 401 });
+    }
+    return new Response(JSON.stringify({ data: [] }), { status: 200 });
+  });
+
+  const result = await fetchFavoLikePosts({
+    X_USERNAME: "test_user",
+    X_USER_ID: "123",
+    X_BEARER_TOKEN: "valid-bearer-token",
+    X_API_KEY: "api-key",
+    X_API_SECRET: "api-secret",
+    X_ACCESS_TOKEN: "access-token",
+    X_ACCESS_SECRET: "access-secret",
+    INCLUDE_LIKES: "false"
+  });
+
+  assert.deepEqual(result.posts, []);
+  assert.equal(authorizationHeaders.length, 2);
+  assert.ok(authorizationHeaders[0].startsWith("Bearer "));
+  assert.ok(authorizationHeaders[1].startsWith("OAuth "));
+});
+
+test("fetchFavoLikePosts does not use a Bearer token for the liked-tweets endpoint", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => {
+    assert.fail("A user-context request must not be sent with the app-only Bearer token");
+  });
+
+  const result = await fetchFavoLikePosts({
+    X_USERNAME: "test_user",
+    X_USER_ID: "123",
+    X_BEARER_TOKEN: "app-only-token",
+    INCLUDE_RETWEETS: "false",
+    INCLUDE_QUOTES: "false"
+  });
+
+  assert.deepEqual(result.posts, []);
+  assert.match(result.warnings[0], /OAuth 1\.0a認証情報が必要/);
+});

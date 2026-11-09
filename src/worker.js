@@ -160,64 +160,76 @@ async function buildOAuth1Header(method, urlObj, credentials) {
 
 export function hasOAuth1Credentials(env) {
   return Boolean(
-    env.X_API_KEY && env.X_API_SECRET && env.X_ACCESS_TOKEN && env.X_ACCESS_SECRET
+    env.X_API_KEY?.trim() &&
+      env.X_API_SECRET?.trim() &&
+      env.X_ACCESS_TOKEN?.trim() &&
+      env.X_ACCESS_SECRET?.trim()
   );
 }
 
 /**
- * X API v2 リクエスト（OAuth 1.0a User Context 優先、未設定時は Bearer Token を使用）
+ * X API v2 認証（公開 API は Bearer 優先、401時に OAuth 1.0a を再試行。User Context は OAuth 1.0a 固定）
  */
 async function xApiFetch(urlStr, env, options = {}) {
   const urlObj = new URL(urlStr);
-  let authHeader = "";
+  const hasOAuth1 = hasOAuth1Credentials(env);
+  const authMethods = options.requireUserContext
+    ? hasOAuth1
+      ? ["oauth1"]
+      : []
+    : [env.X_BEARER_TOKEN?.trim() ? "bearer" : "", hasOAuth1 ? "oauth1" : ""].filter(Boolean);
 
-  if (hasOAuth1Credentials(env)) {
-    authHeader = await buildOAuth1Header("GET", urlObj, {
-      apiKey: env.X_API_KEY.trim(),
-      apiSecret: env.X_API_SECRET.trim(),
-      accessToken: env.X_ACCESS_TOKEN.trim(),
-      accessSecret: env.X_ACCESS_SECRET.trim()
-    });
-  } else if (env.X_BEARER_TOKEN && !options.requireUserContext) {
-    let token = env.X_BEARER_TOKEN.trim();
-    if (token.includes("%")) {
-      try {
-        token = decodeURIComponent(token);
-      } catch {
-        // ignore
-      }
+  if (authMethods.length === 0) {
+    if (options.requireUserContext) {
+      throw new Error(
+        "いいね(liked_tweets)の取得には X_API_KEY / X_API_SECRET / X_ACCESS_TOKEN / X_ACCESS_SECRET のOAuth 1.0a認証情報が必要です。"
+      );
     }
-    authHeader = `Bearer ${token}`;
-  } else if (env.X_BEARER_TOKEN && options.requireUserContext) {
-    let token = env.X_BEARER_TOKEN.trim();
-    if (token.includes("%")) {
-      try {
-        token = decodeURIComponent(token);
-      } catch {
-        // ignore
-      }
-    }
-    authHeader = `Bearer ${token}`;
-  } else {
     throw new Error(
       "X API の認証情報が設定されていません。X_BEARER_TOKEN または OAuth 1.0a 4キーを設定してください。"
     );
   }
 
-  const res = await fetch(urlObj.toString(), {
-    method: "GET",
-    headers: {
-      Authorization: authHeader,
-      "User-Agent": "favo-like-wp-worker/1.0"
+  for (const [index, authMethod] of authMethods.entries()) {
+    let authHeader;
+    if (authMethod === "oauth1") {
+      authHeader = await buildOAuth1Header("GET", urlObj, {
+        apiKey: env.X_API_KEY.trim(),
+        apiSecret: env.X_API_SECRET.trim(),
+        accessToken: env.X_ACCESS_TOKEN.trim(),
+        accessSecret: env.X_ACCESS_SECRET.trim()
+      });
+    } else {
+      let token = env.X_BEARER_TOKEN.trim();
+      if (token.includes("%")) {
+        try {
+          token = decodeURIComponent(token);
+        } catch {
+          // Keep the configured token unchanged if it is not valid percent-encoding.
+        }
+      }
+      authHeader = `Bearer ${token}`;
     }
-  });
 
-  if (!res.ok) {
+    const res = await fetch(urlObj.toString(), {
+      method: "GET",
+      headers: {
+        Authorization: authHeader,
+        "User-Agent": "favo-like-wp-worker/1.0"
+      }
+    });
+
+    if (res.ok) return res.json();
+    if (res.status === 401 && index < authMethods.length - 1) {
+      await res.text();
+      continue;
+    }
+
     const bodyText = await res.text();
-    throw new Error(`X API Error (${res.status}): ${bodyText}`);
+    throw new Error(
+      `X API Error (${res.status}, ${authMethod}, ${urlObj.pathname}): ${bodyText}`
+    );
   }
-
-  return res.json();
 }
 
 async function resolveXUser(env) {
@@ -1510,6 +1522,7 @@ export default {
             quotes: String(env.INCLUDE_QUOTES ?? "true") !== "false"
           },
           oauth1Configured: hasOAuth1Credentials(env),
+          bearerTokenConfigured: Boolean(env.X_BEARER_TOKEN?.trim()),
           githubSyncEnabled: Boolean(env.GITHUB_TOKEN && env.GITHUB_REPO)
         },
         null,
@@ -1522,4 +1535,3 @@ export default {
     );
   }
 };
-
